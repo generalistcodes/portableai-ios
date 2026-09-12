@@ -1,27 +1,43 @@
 import SwiftUI
 
 /// The app's actual root screen once paired: chat is the primary
-/// surface, matching how ChatGPT/Claude's iOS apps work, rather than a
-/// persona-picker list you have to navigate away from. The sidebar
-/// slides in from the left over a dimmed background -- SwiftUI has no
-/// built-in drawer component, so this is a hand-rolled ZStack + offset
-/// animation, the standard way to build one.
+/// surface. The sidebar slides in from the left over a dimmed
+/// background (hand-rolled ZStack + offset).
 struct MainView: View {
     @EnvironmentObject var appState: AppState
     @State private var isSidebarOpen = false
     @State private var personas: [Persona] = []
-    @State private var selectedPersona: Persona?
+    @State private var conversations: [ConversationSummary] = []
+    @State private var pinned: [ConversationDetail] = []
     @State private var loadError: String?
+    @State private var conversationsError: String?
 
-    private let sidebarWidth: CGFloat = 280
+    @State private var selectedPersona: Persona?
+    @State private var selectedConversationId: String?
+    @State private var selectedPinnedId: String?
+    @State private var chatMessages: [ChatMessage] = []
+    @State private var chatConversationId: String?
+    @State private var isOfflineSnapshot = false
+    @State private var chatSessionKey = UUID()
+    @State private var isLoadingConversation = false
+
+    private let sidebarWidth: CGFloat = 300
 
     var body: some View {
         ZStack(alignment: .leading) {
             NavigationStack {
                 Group {
-                    if let selectedPersona {
-                        ChatView(persona: selectedPersona)
-                            .id(selectedPersona.id) // fresh chat state per persona switch
+                    if isLoadingConversation {
+                        ProgressView("Loading chat…")
+                            .tint(Brand.accent)
+                    } else if let selectedPersona {
+                        ChatView(
+                            persona: selectedPersona,
+                            initialConversationId: chatConversationId,
+                            initialMessages: chatMessages,
+                            isOfflineSnapshot: isOfflineSnapshot
+                        )
+                        .id(chatSessionKey)
                     } else if let loadError {
                         ContentUnavailableView(
                             "Couldn't reach the server",
@@ -39,7 +55,12 @@ struct MainView: View {
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button {
-                            withAnimation(.easeInOut(duration: 0.25)) { isSidebarOpen.toggle() }
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                isSidebarOpen.toggle()
+                            }
+                            if isSidebarOpen {
+                                Task { await refreshSidebarLists() }
+                            }
                         } label: {
                             Image(systemName: "line.3.horizontal")
                                 .foregroundStyle(Brand.accent)
@@ -47,12 +68,14 @@ struct MainView: View {
                     }
                     ToolbarItem(placement: .principal) {
                         VStack(spacing: 1) {
-                            Text(selectedPersona?.displayName ?? "PortableAI")
+                            Text(navigationTitle)
                                 .font(.headline)
-                            if let model = selectedPersona?.baseModelLabel {
-                                Text(model)
+                                .lineLimit(1)
+                            if let subtitle = navigationSubtitle {
+                                Text(subtitle)
                                     .font(.caption2.monospaced())
                                     .foregroundStyle(.secondary)
+                                    .lineLimit(1)
                             }
                         }
                     }
@@ -70,8 +93,25 @@ struct MainView: View {
 
             SidebarView(
                 personas: personas,
-                selectedPersona: $selectedPersona,
-                onSelectPersona: {
+                conversations: conversations,
+                pinned: pinned,
+                conversationsError: conversationsError,
+                selectedPersonaId: Binding(
+                    get: { selectedPersona?.id },
+                    set: { _ in }
+                ),
+                selectedConversationId: $selectedConversationId,
+                selectedPinnedId: $selectedPinnedId,
+                onNewChat: { startFreshChat(with: defaultPersona()) },
+                onSelectPersona: { startFreshChat(with: $0) },
+                onSelectConversation: { summary in
+                    Task { await openServerConversation(summary) }
+                },
+                onSelectPinned: { openPinned($0) },
+                onDeleteConversation: { summary in
+                    Task { await deleteConversation(summary) }
+                },
+                onClose: {
                     withAnimation(.easeInOut(duration: 0.25)) { isSidebarOpen = false }
                 }
             )
@@ -79,20 +119,116 @@ struct MainView: View {
             .offset(x: isSidebarOpen ? 0 : -sidebarWidth)
         }
         .tint(Brand.accent)
+        .onReceive(NotificationCenter.default.publisher(for: .portableAIPinnedChatsDidChange)) { _ in
+            refreshPinned()
+        }
         .task {
             await loadPersonas()
-            // Contract: treat `is_default` as the sidebar default landing persona.
+            refreshPinned()
+            await refreshConversations()
             if selectedPersona == nil {
-                selectedPersona = personas.first(where: \.isDefault) ?? personas.first
+                startFreshChat(with: defaultPersona())
             }
+        }
+    }
+
+    private var navigationTitle: String {
+        if isOfflineSnapshot {
+            return selectedPersona?.displayName ?? "Pinned chat"
+        }
+        return selectedPersona?.displayName ?? "PortableAI"
+    }
+
+    private var navigationSubtitle: String? {
+        if isOfflineSnapshot { return "Offline pin" }
+        return selectedPersona?.baseModelLabel
+    }
+
+    private func defaultPersona() -> Persona? {
+        personas.first(where: \.isDefault) ?? personas.first
+    }
+
+    private func personaMatching(id: String) -> Persona {
+        if let match = personas.first(where: { $0.id == id }) {
+            return match
+        }
+        return Persona(id: id, display_name: id)
+    }
+
+    private func startFreshChat(with persona: Persona?) {
+        guard let persona else { return }
+        selectedPersona = persona
+        selectedConversationId = nil
+        selectedPinnedId = nil
+        chatConversationId = nil
+        chatMessages = []
+        isOfflineSnapshot = false
+        chatSessionKey = UUID()
+    }
+
+    private func openServerConversation(_ summary: ConversationSummary) async {
+        isLoadingConversation = true
+        defer { isLoadingConversation = false }
+        do {
+            let detail = try await appState.client.fetchConversation(id: summary.id)
+            selectedPersona = personaMatching(id: detail.persona)
+            selectedConversationId = detail.id
+            selectedPinnedId = nil
+            chatConversationId = detail.id
+            chatMessages = detail.chatMessages
+            isOfflineSnapshot = false
+            chatSessionKey = UUID()
+        } catch {
+            conversationsError = error.localizedDescription
+        }
+    }
+
+    private func openPinned(_ detail: ConversationDetail) {
+        selectedPersona = personaMatching(id: detail.persona)
+        selectedConversationId = nil
+        selectedPinnedId = detail.id
+        chatConversationId = detail.id
+        chatMessages = detail.chatMessages
+        isOfflineSnapshot = true
+        chatSessionKey = UUID()
+    }
+
+    private func deleteConversation(_ summary: ConversationSummary) async {
+        do {
+            try await appState.client.deleteConversation(id: summary.id)
+            conversations.removeAll { $0.id == summary.id }
+            if selectedConversationId == summary.id {
+                startFreshChat(with: defaultPersona())
+            }
+        } catch {
+            conversationsError = error.localizedDescription
         }
     }
 
     private func loadPersonas() async {
         do {
             personas = try await appState.client.fetchPersonas()
+            loadError = nil
         } catch {
             loadError = error.localizedDescription
         }
+    }
+
+    private func refreshConversations() async {
+        do {
+            conversations = try await appState.client.fetchConversations()
+            conversationsError = nil
+        } catch {
+            conversationsError = error.localizedDescription
+        }
+    }
+
+    private func refreshPinned() {
+        pinned = PinnedChatsStore.listPinnedSummaries()
+    }
+
+    private func refreshSidebarLists() async {
+        refreshPinned()
+        await refreshConversations()
     }
 }

@@ -50,5 +50,15 @@ enum PinnedChatsStore {
         return files
             .filter { $0.pathExtension == "json" }
             .map { $0.deletingPathExtension().lastPathComponent }
+            .sorted()
+    }
+
+    /// Decode pinned exports into list rows for the sidebar (offline).
+    static func listPinnedSummaries() -> [ConversationDetail] {
+        listPinnedIds().compactMap { id in
+            guard let data = loadPinned(conversationId: id) else { return nil }
+            return try? JSONDecoder().decode(ConversationDetail.self, from: data)
+        }
+        .sorted { $0.updated_at > $1.updated_at }
     }
 }
