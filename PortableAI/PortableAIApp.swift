@@ -1,32 +1,20 @@
-//
-//  PortableAIApp.swift
-//  PortableAI
-//
-//  Created by kim monzon on 08/09/2026.
-//
-
 import SwiftUI
-import SwiftData
 
 @main
 struct PortableAIApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+    @StateObject private var appState = AppState()
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            Group {
+                if appState.isPaired {
+                    MainView()
+                } else {
+                    PairingView()
+                }
+            }
+            .environmentObject(appState)
+            .tint(Brand.accent)
         }
-        .modelContainer(sharedModelContainer)
     }
 }
