@@ -22,6 +22,12 @@ open PortableAI.xcodeproj
 xcodebuild -scheme PortableAI -destination 'generic/platform=iOS Simulator' build
 ```
 
+## Features
+
+- **Chats** in the sidebar: `GET /api/conversations` + open full history via `GET /api/conversations/<id>`; swipe to delete
+- **Pinned**: local export snapshots via `PinnedChatsStore` (readable offline / airplane mode)
+- **Model picker** in chat toolbar: optional `model_override` on `POST /api/chat` (default = persona `FROM`)
+
 ## LAN test
 
 1. Ubuntu host: Settings → Phone pairing → copy `http://<lan-ip>:5050` + PIN
