@@ -14,7 +14,14 @@ struct PortableAIApp: App {
                 }
             }
             .environmentObject(appState)
-            .tint(Brand.accent)
+            .environment(\.themeColors, appState.colors)
+            .tint(appState.colors.accent)
+            .preferredColorScheme(appState.theme.preferredColorScheme)
+            .task(id: appState.isPaired) {
+                if appState.isPaired {
+                    await appState.refreshTheme()
+                }
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ChatView: View {
     let persona: Persona
@@ -9,6 +10,7 @@ struct ChatView: View {
     let isOfflineSnapshot: Bool
 
     @EnvironmentObject var appState: AppState
+    @Environment(\.themeColors) private var theme
     @State private var messages: [ChatMessage] = []
     @State private var draft = ""
     @State private var conversationId: String?
@@ -19,6 +21,7 @@ struct ChatView: View {
     @State private var installedModels: [InstalledModel] = []
     @State private var lastModelUsed: String?
     @State private var didLoadInitial = false
+    @State private var copiedMessageId: UUID?
 
     init(
         persona: Persona,
@@ -37,10 +40,10 @@ struct ChatView: View {
             if isOfflineSnapshot {
                 Text("Offline pin — showing saved copy")
                     .font(.caption)
-                    .foregroundStyle(Brand.textMuted)
+                    .foregroundStyle(theme.textMuted)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
-                    .background(Brand.sidebar)
+                    .background(theme.sidebar)
             }
 
             ScrollViewReader { proxy in
@@ -52,25 +55,25 @@ struct ChatView: View {
                         }
                         if isSending {
                             ProgressView()
-                                .tint(Brand.accent)
+                                .tint(theme.accent)
                                 .padding(.leading, 8)
                         }
                         if let errorMessage {
                             Text(errorMessage)
                                 .font(.footnote)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(theme.danger)
                                 .padding(.horizontal, 8)
                         }
                         if let lastModelUsed {
                             Text("model_used: \(lastModelUsed)")
                                 .font(.caption2.monospaced())
-                                .foregroundStyle(Brand.textMuted)
+                                .foregroundStyle(theme.textMuted)
                                 .padding(.horizontal, 8)
                         }
                     }
                     .padding()
                 }
-                .background(Brand.main)
+                .background(theme.main)
                 .onChange(of: messages.count) { _, _ in
                     if let last = messages.last {
                         withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
@@ -79,14 +82,15 @@ struct ChatView: View {
             }
 
             if !isOfflineSnapshot {
-                Divider().overlay(Color.white.opacity(0.08))
+                Divider().overlay(theme.textMuted.opacity(0.25))
 
                 HStack(alignment: .bottom, spacing: 10) {
                     TextField("Message \(persona.displayName)", text: $draft, axis: .vertical)
                         .textFieldStyle(.plain)
                         .padding(10)
-                        .background(Brand.assistantBubble)
-                        .foregroundStyle(Brand.textPrimary)
+                        .background(theme.input)
+                        .foregroundStyle(theme.textPrimary)
+                        .tint(theme.accent)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .lineLimit(1...4)
                     Button {
@@ -96,17 +100,17 @@ struct ChatView: View {
                             .font(.title2)
                             .foregroundStyle(
                                 draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending
-                                    ? Brand.textMuted
-                                    : Brand.accent
+                                    ? theme.textMuted
+                                    : theme.accent
                             )
                     }
                     .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
                 }
                 .padding()
-                .background(Brand.sidebar)
+                .background(theme.sidebar)
             }
         }
-        .background(Brand.main)
+        .background(theme.main)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 12) {
@@ -117,7 +121,7 @@ struct ChatView: View {
                         Task { await togglePin() }
                     } label: {
                         Image(systemName: isPinned ? "pin.fill" : "pin")
-                            .foregroundStyle(isPinned ? Brand.accent : Brand.textMuted)
+                            .foregroundStyle(isPinned ? theme.accent : theme.textMuted)
                     }
                     .disabled(conversationId == nil || isOfflineSnapshot)
                 }
@@ -165,7 +169,7 @@ struct ChatView: View {
             }
         } label: {
             Image(systemName: "cpu")
-                .foregroundStyle(modelOverride == nil ? Brand.textMuted : Brand.accent)
+                .foregroundStyle(modelOverride == nil ? theme.textMuted : theme.accent)
         }
         .accessibilityLabel("Model")
     }
@@ -174,7 +178,6 @@ struct ChatView: View {
         do {
             installedModels = try await appState.client.fetchInstalledModels()
         } catch {
-            // Non-fatal — picker just stays empty / default-only.
             #if DEBUG
             print("[PAI] fetchInstalledModels: \(error.localizedDescription)")
             #endif
@@ -201,20 +204,43 @@ struct ChatView: View {
 
     @ViewBuilder
     private func bubble(for message: ChatMessage) -> some View {
-        HStack {
+        HStack(alignment: .bottom, spacing: 8) {
             if message.role == "user" { Spacer(minLength: 40) }
-            Text(message.content)
-                .foregroundStyle(Brand.textPrimary)
-                .padding(10)
-                .background(message.role == "user" ? Brand.userBubble : Brand.assistantBubble)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(
-                            message.role == "user" ? Brand.accent.opacity(0.35) : Color.clear,
-                            lineWidth: 1
-                        )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 4) {
+                Text(message.content)
+                    // Explicit theme primary — never system `.primary` / `.secondary`
+                    .foregroundStyle(theme.textPrimary)
+                    .padding(10)
+                    .background(message.role == "user" ? theme.userBubble : theme.assistantBubble)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(
+                                message.role == "user"
+                                    ? theme.accent.opacity(0.35)
+                                    : theme.bubbleBorder,
+                                lineWidth: 1
+                            )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                Button {
+                    UIPasteboard.general.string = message.content
+                    copiedMessageId = message.id
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        if copiedMessageId == message.id { copiedMessageId = nil }
+                    }
+                } label: {
+                    Label(
+                        copiedMessageId == message.id ? "Copied" : "Copy",
+                        systemImage: copiedMessageId == message.id ? "checkmark" : "doc.on.doc"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(theme.textMuted)
+                }
+                .buttonStyle(.plain)
+            }
+
             if message.role != "user" { Spacer(minLength: 40) }
         }
     }

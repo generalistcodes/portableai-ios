@@ -10,6 +10,7 @@ struct PairingView: View {
     }
 
     @EnvironmentObject var appState: AppState
+    @Environment(\.themeColors) private var theme
     @State private var serverURL = "http://192.168.1."
     @State private var pin = ""
     @State private var deviceName = UIDevice.current.name
@@ -47,7 +48,7 @@ struct PairingView: View {
 
                         Text("Optional. Live camera may fail on some iPhones due to a known iOS bug.")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(theme.textMuted)
                     }
 
                     if let scanError {
@@ -88,7 +89,7 @@ struct PairingView: View {
                     Section {
                         Text("Server address")
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(theme.textMuted)
                         TextField("http://192.168.1.42:5050", text: $serverURL)
                             .id("manualServer")
                             .keyboardType(.URL)
@@ -101,7 +102,7 @@ struct PairingView: View {
 
                         Text("6-digit PIN")
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(theme.textMuted)
                             .padding(.top, 4)
                         TextField("123456", text: $pin)
                             .id("manualPin")
@@ -159,14 +160,14 @@ struct PairingView: View {
                         .foregroundStyle(.white)
                         .listRowBackground(
                             (serverURL.isEmpty || pin.count != 6 || appState.isPairing)
-                                ? Brand.accent.opacity(0.45)
-                                : Brand.accent
+                                ? theme.accent.opacity(0.45)
+                                : theme.accent
                         )
                         .disabled(serverURL.isEmpty || pin.count != 6 || appState.isPairing)
                     }
                 }
                 .navigationTitle("Pair with PortableAI")
-                .tint(Brand.accent)
+                .tint(theme.accent)
                 .onChange(of: photoItem) { _, newItem in
                     guard let newItem else { return }
                     Task { await decodePhotoItem(newItem) }

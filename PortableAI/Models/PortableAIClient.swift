@@ -257,6 +257,26 @@ final class PortableAIClient {
         return try JSONDecoder().decode([Persona].self, from: data)
     }
 
+    // MARK: Theme
+
+    /// `GET /api/theme` → `{"theme":"dark"|"light"|"ube"}`
+    func fetchTheme() async throws -> String {
+        let data = try await request(path: "/api/theme")
+        struct ThemeResponse: Decodable { let theme: String }
+        return try JSONDecoder().decode(ThemeResponse.self, from: data).theme
+    }
+
+    /// `POST /api/theme` with `{"theme":"…"}`.
+    func setTheme(_ theme: String) async throws -> String {
+        let data = try await request(
+            path: "/api/theme",
+            method: "POST",
+            body: ["theme": theme]
+        )
+        struct ThemeResponse: Decodable { let theme: String }
+        return try JSONDecoder().decode(ThemeResponse.self, from: data).theme
+    }
+
     // MARK: Models
 
     /// Installed Ollama models from `GET /api/models` (requires-token).

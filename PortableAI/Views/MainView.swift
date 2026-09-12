@@ -5,6 +5,7 @@ import SwiftUI
 /// background (hand-rolled ZStack + offset).
 struct MainView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.themeColors) private var theme
     @State private var isSidebarOpen = false
     @State private var personas: [Persona] = []
     @State private var conversations: [ConversationSummary] = []
@@ -29,7 +30,7 @@ struct MainView: View {
                 Group {
                     if isLoadingConversation {
                         ProgressView("Loading chat…")
-                            .tint(Brand.accent)
+                            .tint(theme.accent)
                     } else if let selectedPersona {
                         ChatView(
                             persona: selectedPersona,
@@ -63,23 +64,27 @@ struct MainView: View {
                             }
                         } label: {
                             Image(systemName: "line.3.horizontal")
-                                .foregroundStyle(Brand.accent)
+                                .foregroundStyle(theme.accent)
                         }
                     }
                     ToolbarItem(placement: .principal) {
                         VStack(spacing: 1) {
                             Text(navigationTitle)
                                 .font(.headline)
+                                .foregroundStyle(theme.textPrimary)
                                 .lineLimit(1)
                             if let subtitle = navigationSubtitle {
                                 Text(subtitle)
                                     .font(.caption2.monospaced())
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(theme.textMuted)
                                     .lineLimit(1)
                             }
                         }
                     }
                 }
+                .toolbarBackground(theme.main, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+                .toolbarColorScheme(appState.theme.preferredColorScheme, for: .navigationBar)
             }
             .disabled(isSidebarOpen)
             .overlay(
@@ -118,11 +123,13 @@ struct MainView: View {
             .frame(width: sidebarWidth)
             .offset(x: isSidebarOpen ? 0 : -sidebarWidth)
         }
-        .tint(Brand.accent)
+        .tint(theme.accent)
+        .background(theme.main)
         .onReceive(NotificationCenter.default.publisher(for: .portableAIPinnedChatsDidChange)) { _ in
             refreshPinned()
         }
         .task {
+            await appState.refreshTheme()
             await loadPersonas()
             refreshPinned()
             await refreshConversations()

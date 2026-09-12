@@ -18,6 +18,7 @@ struct SidebarView: View {
     var onDeleteConversation: (ConversationSummary) -> Void
     var onClose: () -> Void
 
+    @Environment(\.themeColors) private var theme
     @State private var showSettings = false
 
     var body: some View {
@@ -30,7 +31,7 @@ struct SidebarView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 Text("PortableAI")
                     .font(.title3.bold())
-                    .foregroundStyle(Brand.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
             }
             .padding()
 
@@ -39,7 +40,7 @@ struct SidebarView: View {
                 onClose()
             } label: {
                 Label("New chat", systemImage: "plus.bubble")
-                    .foregroundStyle(Brand.accent)
+                    .foregroundStyle(theme.accent)
                     .frame(minHeight: 44)
             }
             .padding(.horizontal)
@@ -56,14 +57,14 @@ struct SidebarView: View {
                     if conversations.isEmpty && conversationsError == nil {
                         Text("No chats yet.")
                             .font(.footnote)
-                            .foregroundStyle(Brand.textMuted)
+                            .foregroundStyle(theme.textMuted)
                             .listRowBackground(Color.clear)
                     }
                     ForEach(conversations) { conversation in
                         conversationButton(conversation)
                             .listRowBackground(
                                 selectedConversationId == conversation.id && selectedPinnedId == nil
-                                    ? Brand.active
+                                    ? theme.active
                                     : Color.clear
                             )
                             .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
@@ -80,25 +81,25 @@ struct SidebarView: View {
                     }
                 } header: {
                     Text("Chats")
-                        .foregroundStyle(Brand.textMuted)
+                        .foregroundStyle(theme.textMuted)
                 }
 
                 if !pinned.isEmpty {
                     Section {
                         Text("Stored on this phone — works offline.")
                             .font(.caption2)
-                            .foregroundStyle(Brand.textMuted)
+                            .foregroundStyle(theme.textMuted)
                             .listRowBackground(Color.clear)
                         ForEach(pinned, id: \.id) { item in
                             pinnedButton(item)
                                 .listRowBackground(
-                                    selectedPinnedId == item.id ? Brand.active : Color.clear
+                                    selectedPinnedId == item.id ? theme.active : Color.clear
                                 )
                                 .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
                         }
                     } header: {
                         Text("Pinned")
-                            .foregroundStyle(Brand.textMuted)
+                            .foregroundStyle(theme.textMuted)
                     }
                 }
 
@@ -109,7 +110,7 @@ struct SidebarView: View {
                                 selectedPersonaId == persona.id
                                     && selectedConversationId == nil
                                     && selectedPinnedId == nil
-                                    ? Brand.active
+                                    ? theme.active
                                     : Color.clear
                             )
                             .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
@@ -117,12 +118,12 @@ struct SidebarView: View {
                     if personas.isEmpty {
                         Text("No personas found.")
                             .font(.footnote)
-                            .foregroundStyle(Brand.textMuted)
+                            .foregroundStyle(theme.textMuted)
                             .listRowBackground(Color.clear)
                     }
                 } header: {
                     Text("Personas")
-                        .foregroundStyle(Brand.textMuted)
+                        .foregroundStyle(theme.textMuted)
                 }
             }
             .listStyle(.plain)
@@ -135,14 +136,14 @@ struct SidebarView: View {
                 showSettings = true
             } label: {
                 Label("Settings", systemImage: "gearshape")
-                    .foregroundStyle(Brand.textMuted)
+                    .foregroundStyle(theme.textMuted)
                     .padding()
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }
             .buttonStyle(.plain)
         }
         .frame(maxHeight: .infinity)
-        .background(Brand.sidebar)
+        .background(theme.sidebar)
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
@@ -155,24 +156,24 @@ struct SidebarView: View {
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "bubble.left.and.bubble.right")
-                    .foregroundStyle(Brand.accent)
+                    .foregroundStyle(theme.accent)
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(conversation.displayTitle)
-                        .foregroundStyle(Brand.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                         .multilineTextAlignment(.leading)
                         .lineLimit(2)
                     HStack(spacing: 6) {
                         Text(personaLabel(for: conversation.persona))
                             .font(.caption2)
-                            .foregroundStyle(Brand.textMuted)
+                            .foregroundStyle(theme.textMuted)
                             .lineLimit(1)
                         Text("·")
                             .font(.caption2)
-                            .foregroundStyle(Brand.textMuted)
+                            .foregroundStyle(theme.textMuted)
                         Text(RelativeTime.string(fromUnixSeconds: conversation.updated_at))
                             .font(.caption2)
-                            .foregroundStyle(Brand.textMuted)
+                            .foregroundStyle(theme.textMuted)
                     }
                 }
                 Spacer(minLength: 0)
@@ -190,23 +191,23 @@ struct SidebarView: View {
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "pin.fill")
-                    .foregroundStyle(Brand.accent)
+                    .foregroundStyle(theme.accent)
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.displayTitle)
-                        .foregroundStyle(Brand.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                         .multilineTextAlignment(.leading)
                         .lineLimit(2)
                     HStack(spacing: 6) {
                         Text(personaLabel(for: item.persona))
                             .font(.caption2)
-                            .foregroundStyle(Brand.textMuted)
+                            .foregroundStyle(theme.textMuted)
                         Text("·")
                             .font(.caption2)
-                            .foregroundStyle(Brand.textMuted)
+                            .foregroundStyle(theme.textMuted)
                         Text(RelativeTime.string(fromUnixSeconds: item.updated_at))
                             .font(.caption2)
-                            .foregroundStyle(Brand.textMuted)
+                            .foregroundStyle(theme.textMuted)
                     }
                 }
                 Spacer(minLength: 0)
@@ -224,22 +225,22 @@ struct SidebarView: View {
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: persona.systemImage)
-                    .foregroundStyle(Brand.accent)
+                    .foregroundStyle(theme.accent)
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(persona.displayName)
-                            .foregroundStyle(Brand.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                         if persona.isDefault {
                             Text("Default")
                                 .font(.caption2.weight(.semibold))
-                                .foregroundStyle(Brand.accent)
+                                .foregroundStyle(theme.accent)
                         }
                     }
                     if let model = persona.baseModelLabel {
                         Text(model)
                             .font(.caption2.monospaced())
-                            .foregroundStyle(Brand.textMuted)
+                            .foregroundStyle(theme.textMuted)
                     } else if let error = persona.error {
                         Text(error)
                             .font(.caption2)
