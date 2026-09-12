@@ -1,2 +1,18 @@
+# Xcode / build noise
 .derivedData/
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Local drafts / tooling
 ios/
+.DS_Store
+*.swp
+*~
