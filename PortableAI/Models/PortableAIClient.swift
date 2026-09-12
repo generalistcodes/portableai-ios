@@ -14,6 +14,26 @@ struct Persona: Decodable, Identifiable, Hashable {
     let parameters: [String: PersonaParameter]?
     let error: String?
 
+    init(
+        id: String,
+        display_name: String,
+        is_default: Bool = false,
+        icon: String = "message",
+        base_model: String? = nil,
+        system_preview: String? = nil,
+        parameters: [String: PersonaParameter]? = nil,
+        error: String? = nil
+    ) {
+        self.id = id
+        self.display_name = display_name
+        self.is_default = is_default
+        self.icon = icon
+        self.base_model = base_model
+        self.system_preview = system_preview
+        self.parameters = parameters
+        self.error = error
+    }
+
     /// Prefer server `display_name`; fall back to `id` if blank.
     var displayName: String {
         let trimmed = display_name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -79,6 +99,98 @@ struct ChatMessage: Codable, Identifiable {
     let content: String
 
     enum CodingKeys: String, CodingKey { case role, content }
+
+    init(role: String, content: String) {
+        self.role = role
+        self.content = content
+    }
+}
+
+/// List row from `GET /api/conversations` (no `messages`).
+/// `archived` is `0`/`1` per API_CONTRACT.md, not a JSON bool.
+struct ConversationSummary: Decodable, Identifiable, Hashable {
+    let id: String
+    let owner_id: String?
+    let persona: String
+    let model_used: String?
+    let title: String?
+    let created_at: Double
+    let updated_at: Double
+    let archived: Int
+
+    var displayTitle: String {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "New chat" : trimmed
+    }
+}
+
+/// Full conversation from GET one / export (includes `messages`).
+struct ConversationDetail: Decodable {
+    let id: String
+    let owner_id: String?
+    let persona: String
+    let model_used: String?
+    let title: String?
+    let created_at: Double
+    let updated_at: Double
+    let archived: Int
+    let messages: [ConversationMessage]
+
+    var displayTitle: String {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "New chat" : trimmed
+    }
+
+    var chatMessages: [ChatMessage] {
+        messages.map { ChatMessage(role: $0.role, content: $0.content) }
+    }
+}
+
+struct ConversationMessage: Decodable {
+    let role: String
+    let content: String
+    let latency_ms: Int?
+    let created_at: Double?
+}
+
+/// Element of `GET /api/models` → `models` array.
+struct InstalledModel: Decodable, Identifiable, Hashable {
+    let name: String?
+    let digest: String?
+    let size_bytes: Int64?
+    let size_human: String?
+    let quantization: String?
+    let parameter_size: String?
+    let modified_at: String?
+
+    var id: String { name ?? digest ?? UUID().uuidString }
+
+    var displayLabel: String {
+        guard let name, !name.isEmpty else { return "Unknown model" }
+        var parts = [name]
+        if let parameter_size, !parameter_size.isEmpty { parts.append(parameter_size) }
+        if let quantization, !quantization.isEmpty { parts.append(quantization) }
+        return parts.joined(separator: " · ")
+    }
+}
+
+private struct ModelsListResponse: Decodable {
+    let models: [InstalledModel]
+    let models_path_hint: String?
+    let error: String?
+}
+
+enum RelativeTime {
+    private static let formatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
+    static func string(fromUnixSeconds unix: Double) -> String {
+        let date = Date(timeIntervalSince1970: unix)
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
 }
 
 struct APIError: Error, LocalizedError {
@@ -145,10 +257,39 @@ final class PortableAIClient {
         return try JSONDecoder().decode([Persona].self, from: data)
     }
 
+    // MARK: Models
+
+    /// Installed Ollama models from `GET /api/models` (requires-token).
+    func fetchInstalledModels() async throws -> [InstalledModel] {
+        let data = try await request(path: "/api/models")
+        let decoded = try JSONDecoder().decode(ModelsListResponse.self, from: data)
+        return decoded.models.compactMap { model in
+            guard let name = model.name, !name.isEmpty else { return nil }
+            return model
+        }
+    }
+
+    // MARK: Conversations
+
+    /// Active (non-archived) conversations for this device, newest first.
+    func fetchConversations() async throws -> [ConversationSummary] {
+        let data = try await request(path: "/api/conversations")
+        return try JSONDecoder().decode([ConversationSummary].self, from: data)
+    }
+
+    func fetchConversation(id: String) async throws -> ConversationDetail {
+        let data = try await request(path: "/api/conversations/\(id)")
+        return try JSONDecoder().decode(ConversationDetail.self, from: data)
+    }
+
+    func deleteConversation(id: String) async throws {
+        _ = try await request(path: "/api/conversations/\(id)", method: "DELETE")
+    }
+
     // MARK: Chat
 
-    /// Sends a chat turn. The phone UI does not expose `model_override`;
-    /// Ollama uses the persona's Modelfile `FROM` unless an override is passed.
+    /// Sends a chat turn. Pass `modelOverride` to set `/api/chat`'s
+    /// `model_override`; omit/nil uses the persona Modelfile `FROM`.
     func sendChat(
         persona: String,
         message: String,
@@ -165,9 +306,6 @@ final class PortableAIClient {
     /// Raw JSON bytes for a conversation, straight from the server's
     /// export endpoint -- used both for on-screen history and for
     /// pinning (PinnedChatsStore saves this exact data to disk).
-    /// Throws the same "conversation not found" error a different
-    /// device's conversation ID would get -- ownership is enforced
-    /// server-side, not here.
     func fetchConversationExport(conversationId: String) async throws -> Data {
         try await request(path: "/api/conversations/\(conversationId)/export")
     }

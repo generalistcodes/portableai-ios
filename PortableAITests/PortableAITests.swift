@@ -45,4 +45,48 @@ struct PortableAITests {
         #expect(response.model_used == "assistant")
         #expect(response.conversation_id == "abc")
     }
+
+    @Test func conversationListRowDecodesContractShape() throws {
+        let json = """
+        [{
+          "id": "uuid-1",
+          "owner_id": "tok",
+          "persona": "assistant",
+          "model_used": "assistant",
+          "title": null,
+          "created_at": 1732650000.0,
+          "updated_at": 1732650001.0,
+          "archived": 0
+        }]
+        """.data(using: .utf8)!
+        let rows = try JSONDecoder().decode([ConversationSummary].self, from: json)
+        #expect(rows.count == 1)
+        #expect(rows[0].displayTitle == "New chat")
+        #expect(rows[0].archived == 0)
+        #expect(rows[0].persona == "assistant")
+    }
+
+    @Test func conversationDetailDecodesMessagesWithoutIds() throws {
+        let json = """
+        {
+          "id": "uuid-1",
+          "owner_id": "tok",
+          "persona": "assistant",
+          "model_used": "assistant",
+          "title": "Hello",
+          "created_at": 1732650000.0,
+          "updated_at": 1732650001.0,
+          "archived": 0,
+          "messages": [
+            {"role":"user","content":"Hi","latency_ms":null,"created_at":1732650000.5},
+            {"role":"assistant","content":"Hey","latency_ms":10,"created_at":1732650001.2}
+          ]
+        }
+        """.data(using: .utf8)!
+        let detail = try JSONDecoder().decode(ConversationDetail.self, from: json)
+        #expect(detail.displayTitle == "Hello")
+        #expect(detail.chatMessages.count == 2)
+        #expect(detail.chatMessages[0].role == "user")
+        #expect(detail.chatMessages[1].content == "Hey")
+    }
 }
