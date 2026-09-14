@@ -415,7 +415,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PortableAI/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "PortableAI uses the camera to scan a pairing QR code.";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "PortableAI connects to your own PortableAI server on your local network.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "PortableAI finds PortableAI servers on your local network and connects to the one you pair with.";
+				INFOPLIST_KEY_NSBonjourServices = "_portableai._tcp";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -451,7 +452,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PortableAI/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "PortableAI uses the camera to scan a pairing QR code.";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "PortableAI connects to your own PortableAI server on your local network.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "PortableAI finds PortableAI servers on your local network and connects to the one you pair with.";
+				INFOPLIST_KEY_NSBonjourServices = "_portableai._tcp";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

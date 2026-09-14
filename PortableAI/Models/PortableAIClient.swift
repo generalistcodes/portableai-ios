@@ -195,7 +195,19 @@ enum RelativeTime {
 
 struct APIError: Error, LocalizedError {
     let message: String
+    let statusCode: Int?
+
+    init(message: String, statusCode: Int? = nil) {
+        self.message = message
+        self.statusCode = statusCode
+    }
+
     var errorDescription: String? { message }
+
+    /// Server rejected the device token (revoked / unknown).
+    var isUnauthorized: Bool {
+        statusCode == 401 || statusCode == 403
+    }
 }
 
 /// Thin client for the PortableAI server's REST API. Every request after
@@ -232,7 +244,10 @@ final class PortableAIClient {
         guard (200...299).contains(http.statusCode) else {
             let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             let serverMessage = json?["error"] as? String
-            throw APIError(message: serverMessage ?? "Server returned \(http.statusCode)")
+            throw APIError(
+                message: serverMessage ?? "Server returned \(http.statusCode)",
+                statusCode: http.statusCode
+            )
         }
         return data
     }
