@@ -57,7 +57,8 @@ final class AppState: ObservableObject {
         ) != nil
     }
 
-    /// Pair with a PIN and store under `serverID` (hostname / display name preferred).
+    /// Pair with a PIN or family password and store under `serverID`.
+    /// Exactly 6 digits are sent as `pin`; anything else as `family_password`.
     func pair(
         serverURL: String,
         pin: String,
@@ -71,7 +72,7 @@ final class AppState: ObservableObject {
         do {
             let token = try await PortableAIClient.claimPairing(
                 baseURL: serverURL,
-                pin: pin,
+                secret: pin,
                 deviceName: deviceName
             )
             let id = PairingKeychain.normalizeID(

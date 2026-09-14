@@ -5,7 +5,7 @@ import UIKit
 struct PairingView: View {
     private enum Field: Hashable {
         case serverURL
-        case pin
+        case secret
         case deviceName
     }
 
@@ -13,7 +13,8 @@ struct PairingView: View {
     @Environment(\.themeColors) private var theme
     @Environment(\.dismiss) private var dismiss
     @State private var serverURL = "http://192.168.1."
-    @State private var pin = ""
+    /// Rotating 6-digit PIN **or** family password (same field; see claim routing).
+    @State private var pairingSecret = ""
     @State private var deviceName = UIDevice.current.name
     @State private var showScanner = false
     @State private var scanError: String?
@@ -207,29 +208,23 @@ struct PairingView: View {
                             .font(.body)
                             .frame(minHeight: 44)
 
-                        Text("6-digit PIN")
+                        Text("PIN or password")
                             .font(.subheadline)
                             .foregroundStyle(theme.textMuted)
                             .padding(.top, 4)
-                        TextField("123456", text: $pin)
+                        TextField("PIN or password", text: $pairingSecret)
                             .id("manualPin")
-                            .keyboardType(.numberPad)
-                            .textContentType(.oneTimeCode)
-                            .focused($focusedField, equals: .pin)
-                            .font(.title2.monospacedDigit())
+                            .keyboardType(.asciiCapable)
+                            .textContentType(.password)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .secret)
+                            .font(.body.monospaced())
                             .frame(minHeight: 48)
-                            .onChange(of: pin) { _, newValue in
-                                let digits = newValue.filter(\.isNumber)
-                                if digits != newValue {
-                                    pin = String(digits.prefix(6))
-                                } else if newValue.count > 6 {
-                                    pin = String(newValue.prefix(6))
-                                }
-                            }
                     } header: {
                         Text("Enter server details")
                     } footer: {
-                        Text("From PortableAI Settings → Phone pairing on your laptop: copy the address and PIN.")
+                        Text("Use the 6-digit PIN from Phone pairing, or the family password from Settings on the laptop. QR codes still use the rotating PIN only.")
                     }
 
                     Section("This device") {
@@ -251,10 +246,11 @@ struct PairingView: View {
                             let id = pendingServerID
                                 ?? PairingKeychain.serverID(fromBaseURL: serverURL)
                             let name = pendingDisplayName ?? id
+                            let secret = pairingSecret.trimmingCharacters(in: .whitespacesAndNewlines)
                             Task {
                                 await appState.pair(
                                     serverURL: serverURL,
-                                    pin: pin,
+                                    pin: secret,
                                     deviceName: deviceName,
                                     serverID: id,
                                     displayName: name
@@ -278,11 +274,15 @@ struct PairingView: View {
                         }
                         .foregroundStyle(.white)
                         .listRowBackground(
-                            (serverURL.isEmpty || pin.count != 6 || appState.isPairing)
+                            (serverURL.isEmpty || pairingSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || appState.isPairing)
                                 ? theme.accent.opacity(0.45)
                                 : theme.accent
                         )
-                        .disabled(serverURL.isEmpty || pin.count != 6 || appState.isPairing)
+                        .disabled(
+                            serverURL.isEmpty
+                                || pairingSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                || appState.isPairing
+                        )
                     }
                 }
                 .refreshable {
@@ -359,7 +359,7 @@ struct PairingView: View {
             displayName: server.displayName,
             baseURL: server.baseURL
         ) {
-            pin = ""
+            pairingSecret = ""
             focusedField = nil
             let ok = await appState.connectWithStoredCredential(
                 serverID: server.serverID,
@@ -370,10 +370,10 @@ struct PairingView: View {
                 dismiss()
                 return
             }
-            // Revoked or failed — fall through to PIN entry.
+            // Revoked or failed — fall through to PIN/password entry.
         }
 
-        focusedField = .pin
+        focusedField = .secret
     }
 
     private func presentCameraBlocked() {
@@ -438,7 +438,8 @@ struct PairingView: View {
         scanError = nil
         cameraBlocked = false
         serverURL = "http://\(host):\(port)"
-        pin = scannedPin
+        // QR encodes rotating PIN only — never the family password.
+        pairingSecret = scannedPin
         pendingServerID = PairingKeychain.normalizeID(host)
         pendingDisplayName = host
         let pairedURL = serverURL
