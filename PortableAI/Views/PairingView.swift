@@ -5,14 +5,16 @@ import UIKit
 struct PairingView: View {
     private enum Field: Hashable {
         case serverURL
-        case pin
+        case secret
         case deviceName
     }
 
     @EnvironmentObject var appState: AppState
     @Environment(\.themeColors) private var theme
+    @Environment(\.dismiss) private var dismiss
     @State private var serverURL = "http://192.168.1."
-    @State private var pin = ""
+    /// Rotating 6-digit PIN **or** family password (same field; see claim routing).
+    @State private var pairingSecret = ""
     @State private var deviceName = UIDevice.current.name
     @State private var showScanner = false
     @State private var scanError: String?
@@ -22,11 +24,117 @@ struct PairingView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var isDecodingPhoto = false
     @FocusState private var focusedField: Field?
+    @StateObject private var discovery = PortableAIDiscovery()
+    /// Identity for the server currently being PIN-paired (from discovery or URL host).
+    @State private var pendingServerID: ServerID?
+    @State private var pendingDisplayName: String?
 
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
                 Form {
+                    Section {
+                        if discovery.servers.isEmpty {
+                            if discovery.isInitialSearch {
+                                HStack(spacing: 10) {
+                                    ProgressView()
+                                    Text("Looking for PortableAI servers…")
+                                        .foregroundStyle(theme.textMuted)
+                                }
+                                .frame(minHeight: 44)
+                            } else {
+                                Text("No PortableAI servers found on this network")
+                                    .foregroundStyle(theme.textMuted)
+                                    .frame(minHeight: 44)
+
+                                Button {
+                                    discovery.refresh()
+                                } label: {
+                                    Label("Discover again", systemImage: "arrow.clockwise")
+                                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                }
+                            }
+                        } else {
+                            ForEach(discovery.servers) { server in
+                                Button {
+                                    Task { await selectDiscoveredServer(server) }
+                                } label: {
+                                    HStack(alignment: .top, spacing: 12) {
+                                        Image(systemName: "desktopcomputer")
+                                            .foregroundStyle(theme.accent)
+                                            .frame(width: 22)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            HStack(spacing: 8) {
+                                                Text(server.displayName)
+                                                    .foregroundStyle(theme.textPrimary)
+                                                    .font(.body.weight(.medium))
+                                                if appState.isRemembered(
+                                                    serverID: server.serverID,
+                                                    displayName: server.displayName,
+                                                    baseURL: server.baseURL
+                                                ) {
+                                                    Text("Paired")
+                                                        .font(.caption2.weight(.semibold))
+                                                        .foregroundStyle(theme.accent)
+                                                        .padding(.horizontal, 6)
+                                                        .padding(.vertical, 2)
+                                                        .background(theme.accent.opacity(0.15))
+                                                        .clipShape(Capsule())
+                                                }
+                                            }
+                                            Text(server.baseURL)
+                                                .font(.caption.monospaced())
+                                                .foregroundStyle(theme.textMuted)
+                                        }
+                                        Spacer(minLength: 0)
+                                        if appState.isPairing {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                        } else {
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(theme.textMuted)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(appState.isPairing)
+                            }
+
+                            Button {
+                                discovery.refresh()
+                            } label: {
+                                Label(
+                                    discovery.isInitialSearch ? "Searching…" : "Discover again",
+                                    systemImage: "arrow.clockwise"
+                                )
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            }
+                            .disabled(discovery.isInitialSearch)
+                        }
+                    } header: {
+                        HStack {
+                            Text("Found on your network")
+                            Spacer()
+                            if discovery.isInitialSearch {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Button {
+                                    discovery.refresh()
+                                } label: {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .accessibilityLabel("Discover again")
+                            }
+                        }
+                    } footer: {
+                        Text("Tap a paired server to reconnect instantly. New servers need the PIN from that machine. Pull down or tap Discover again to rescan.")
+                    }
+
                     Section {
                         Button {
                             scanError = nil
@@ -100,29 +208,23 @@ struct PairingView: View {
                             .font(.body)
                             .frame(minHeight: 44)
 
-                        Text("6-digit PIN")
+                        Text("PIN or password")
                             .font(.subheadline)
                             .foregroundStyle(theme.textMuted)
                             .padding(.top, 4)
-                        TextField("123456", text: $pin)
+                        TextField("PIN or password", text: $pairingSecret)
                             .id("manualPin")
-                            .keyboardType(.numberPad)
-                            .textContentType(.oneTimeCode)
-                            .focused($focusedField, equals: .pin)
-                            .font(.title2.monospacedDigit())
+                            .keyboardType(.asciiCapable)
+                            .textContentType(.password)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .secret)
+                            .font(.body.monospaced())
                             .frame(minHeight: 48)
-                            .onChange(of: pin) { _, newValue in
-                                let digits = newValue.filter(\.isNumber)
-                                if digits != newValue {
-                                    pin = String(digits.prefix(6))
-                                } else if newValue.count > 6 {
-                                    pin = String(newValue.prefix(6))
-                                }
-                            }
                     } header: {
                         Text("Enter server details")
                     } footer: {
-                        Text("From PortableAI Settings → Phone pairing on your laptop: copy the address and PIN.")
+                        Text("Use the 6-digit PIN from Phone pairing, or the family password from Settings on the laptop. QR codes still use the rotating PIN only.")
                     }
 
                     Section("This device") {
@@ -141,8 +243,21 @@ struct PairingView: View {
                     Section {
                         Button {
                             focusedField = nil
+                            let id = pendingServerID
+                                ?? PairingKeychain.serverID(fromBaseURL: serverURL)
+                            let name = pendingDisplayName ?? id
+                            let secret = pairingSecret.trimmingCharacters(in: .whitespacesAndNewlines)
                             Task {
-                                await appState.pair(serverURL: serverURL, pin: pin, deviceName: deviceName)
+                                await appState.pair(
+                                    serverURL: serverURL,
+                                    pin: secret,
+                                    deviceName: deviceName,
+                                    serverID: id,
+                                    displayName: name
+                                )
+                                if appState.isPaired {
+                                    dismiss()
+                                }
                             }
                         } label: {
                             Group {
@@ -159,15 +274,30 @@ struct PairingView: View {
                         }
                         .foregroundStyle(.white)
                         .listRowBackground(
-                            (serverURL.isEmpty || pin.count != 6 || appState.isPairing)
+                            (serverURL.isEmpty || pairingSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || appState.isPairing)
                                 ? theme.accent.opacity(0.45)
                                 : theme.accent
                         )
-                        .disabled(serverURL.isEmpty || pin.count != 6 || appState.isPairing)
+                        .disabled(
+                            serverURL.isEmpty
+                                || pairingSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                || appState.isPairing
+                        )
                     }
+                }
+                .refreshable {
+                    discovery.refresh()
+                    // Keep the pull-to-refresh spinner up through the search window.
+                    try? await Task.sleep(nanoseconds: 3_200_000_000)
                 }
                 .navigationTitle("Pair with PortableAI")
                 .tint(theme.accent)
+                .onAppear {
+                    discovery.start()
+                }
+                .onDisappear {
+                    discovery.stop()
+                }
                 .onChange(of: photoItem) { _, newItem in
                     guard let newItem else { return }
                     Task { await decodePhotoItem(newItem) }
@@ -215,6 +345,35 @@ struct PairingView: View {
                 }
             }
         }
+    }
+
+    private func selectDiscoveredServer(_ server: DiscoveredPortableAIServer) async {
+        scanError = nil
+        cameraBlocked = false
+        serverURL = server.baseURL
+        pendingServerID = server.serverID
+        pendingDisplayName = server.displayName
+
+        if appState.isRemembered(
+            serverID: server.serverID,
+            displayName: server.displayName,
+            baseURL: server.baseURL
+        ) {
+            pairingSecret = ""
+            focusedField = nil
+            let ok = await appState.connectWithStoredCredential(
+                serverID: server.serverID,
+                baseURL: server.baseURL,
+                displayName: server.displayName
+            )
+            if ok {
+                dismiss()
+                return
+            }
+            // Revoked or failed — fall through to PIN/password entry.
+        }
+
+        focusedField = .secret
     }
 
     private func presentCameraBlocked() {
@@ -279,12 +438,25 @@ struct PairingView: View {
         scanError = nil
         cameraBlocked = false
         serverURL = "http://\(host):\(port)"
-        pin = scannedPin
+        // QR encodes rotating PIN only — never the family password.
+        pairingSecret = scannedPin
+        pendingServerID = PairingKeychain.normalizeID(host)
+        pendingDisplayName = host
         let pairedURL = serverURL
         let pairedPin = scannedPin
         let pairedName = deviceName
+        let pairedID = pendingServerID
         Task {
-            await appState.pair(serverURL: pairedURL, pin: pairedPin, deviceName: pairedName)
+            await appState.pair(
+                serverURL: pairedURL,
+                pin: pairedPin,
+                deviceName: pairedName,
+                serverID: pairedID,
+                displayName: host
+            )
+            if appState.isPaired {
+                dismiss()
+            }
         }
     }
 }

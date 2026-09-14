@@ -5,9 +5,13 @@
 	<key>NSCameraUsageDescription</key>
 	<string>PortableAI uses the camera to scan a pairing QR code.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>PortableAI connects to your own PortableAI server on your local network.</string>
+	<string>PortableAI finds PortableAI servers on your local network and connects to the one you pair with.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_portableai._tcp</string>
+	</array>
 	<key>NSAppTransportSecurity</key>
-	<dict>
+    <dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>

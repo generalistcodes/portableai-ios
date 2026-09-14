@@ -195,7 +195,19 @@ enum RelativeTime {
 
 struct APIError: Error, LocalizedError {
     let message: String
+    let statusCode: Int?
+
+    init(message: String, statusCode: Int? = nil) {
+        self.message = message
+        self.statusCode = statusCode
+    }
+
     var errorDescription: String? { message }
+
+    /// Server rejected the device token (revoked / unknown).
+    var isUnauthorized: Bool {
+        statusCode == 401 || statusCode == 403
+    }
 }
 
 /// Thin client for the PortableAI server's REST API. Every request after
@@ -232,22 +244,51 @@ final class PortableAIClient {
         guard (200...299).contains(http.statusCode) else {
             let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             let serverMessage = json?["error"] as? String
-            throw APIError(message: serverMessage ?? "Server returned \(http.statusCode)")
+            throw APIError(
+                message: serverMessage ?? "Server returned \(http.statusCode)",
+                statusCode: http.statusCode
+            )
         }
         return data
     }
 
     // MARK: Pairing (no token needed yet -- this IS how we get one)
 
-    static func claimPairing(baseURL: String, pin: String, deviceName: String) async throws -> String {
+    /// Claims a device token via `POST /api/pairing/claim`.
+    /// - Exactly 6 digits → JSON `pin` (rotating single-use PIN).
+    /// - Anything else → JSON `family_password` (persistent; omit `pin`).
+    /// QR codes keep encoding `pair_pin` only — never the family password.
+    static func claimPairing(baseURL: String, secret: String, deviceName: String) async throws -> String {
+        let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw APIError(message: "PIN or password is required")
+        }
+
+        var body: [String: Any] = ["device_name": deviceName]
+        if isRotatingPIN(trimmed) {
+            body["pin"] = trimmed
+        } else {
+            body["family_password"] = trimmed
+        }
+
         let client = PortableAIClient(baseURL: baseURL, deviceToken: nil)
         let data = try await client.request(
             path: "/api/pairing/claim",
             method: "POST",
-            body: ["pin": pin, "device_name": deviceName]
+            body: body
         )
         struct ClaimResponse: Decodable { let device_token: String }
         return try JSONDecoder().decode(ClaimResponse.self, from: data).device_token
+    }
+
+    /// Rotating PIN is always exactly 6 digits (matches QR `pair_pin`).
+    static func isRotatingPIN(_ value: String) -> Bool {
+        value.count == 6 && value.allSatisfy(\.isNumber)
+    }
+
+    /// Legacy name — prefer `claimPairing(baseURL:secret:deviceName:)`.
+    static func claimPairing(baseURL: String, pin: String, deviceName: String) async throws -> String {
+        try await claimPairing(baseURL: baseURL, secret: pin, deviceName: deviceName)
     }
 
     // MARK: Personas
