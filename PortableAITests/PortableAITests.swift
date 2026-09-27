@@ -46,6 +46,52 @@ struct PortableAITests {
         #expect(response.conversation_id == "abc")
     }
 
+    @Test func chatNDJSONTokenAndDoneLinesDecode() throws {
+        let token = try ChatNDJSON.decodeLine(#"{"token":"Hel"}"#)
+        #expect(token.token == "Hel")
+        #expect(token.done == nil)
+
+        let done = try ChatNDJSON.decodeLine(
+            #"{"done":true,"reply":"Hello.","latency_ms":90,"model_used":"assistant","conversation_id":"c1"}"#
+        )
+        #expect(done.done == true)
+        #expect(done.reply == "Hello.")
+        #expect(done.latency_ms == 90)
+        #expect(done.conversation_id == "c1")
+    }
+
+    @Test func chatNDJSONDrainSplitsLinesLikeWebUI() throws {
+        var buf = "{\"token\":\"A\"}\n{\"token\":\"B\"}\n{\"done\":true,\"reply\":\"AB\",\"latency_ms\":1,\"model_used\":\"assistant\",\"conversation_id\":\"x\"}"
+        let events = try ChatNDJSON.drain(&buf)
+        #expect(events.count == 2)
+        #expect(events[0].token == "A")
+        #expect(events[1].token == "B")
+        #expect(buf.hasPrefix("{\"done\""))
+        let final = try ChatNDJSON.flushRemainder(&buf)
+        #expect(final?.done == true)
+        #expect(final?.reply == "AB")
+        #expect(buf.isEmpty)
+    }
+
+    @Test func chatMarkdownRendersBoldAndLists() throws {
+        let bold = ChatMarkdown.attributed("**Keep dry** tinder")
+        #expect(String(bold.characters).contains("Keep dry"))
+        let hasBold = bold.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true }
+        #expect(hasBold)
+
+        let list = ChatMarkdown.attributed("- tip one\n- tip two\n- tip three")
+        let listRuns = list.runs.filter { run in
+            run.presentationIntent?.components.contains(where: {
+                if case .listItem = $0.kind { return true }
+                return false
+            }) == true
+        }
+        #expect(listRuns.count == 3)
+
+        let plain = ChatMarkdown.attributed("Just a plain sentence.")
+        #expect(String(plain.characters) == "Just a plain sentence.")
+    }
+
     @Test func conversationListRowDecodesContractShape() throws {
         let json = """
         [{

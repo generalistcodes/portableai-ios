@@ -93,10 +93,51 @@ struct ChatResponse: Decodable {
     let conversation_id: String
 }
 
+/// One line from `POST /api/chat` NDJSON (`application/x-ndjson`).
+struct ChatStreamEvent: Decodable {
+    let token: String?
+    let done: Bool?
+    let reply: String?
+    let latency_ms: Int?
+    let model_used: String?
+    let conversation_id: String?
+    let error: String?
+}
+
+/// Splits an NDJSON buffer the same way the web UI's `readNdjson` does:
+/// complete lines are parsed; the unfinished trailing fragment is returned.
+enum ChatNDJSON {
+    static func drain(_ buffer: inout String) throws -> [ChatStreamEvent] {
+        var events: [ChatStreamEvent] = []
+        let parts = buffer.split(separator: "\n", omittingEmptySubsequences: false)
+        buffer = parts.last.map(String.init) ?? ""
+        for part in parts.dropLast() {
+            let line = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { continue }
+            events.append(try decodeLine(line))
+        }
+        return events
+    }
+
+    static func flushRemainder(_ buffer: inout String) throws -> ChatStreamEvent? {
+        let line = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        buffer = ""
+        guard !line.isEmpty else { return nil }
+        return try decodeLine(line)
+    }
+
+    static func decodeLine(_ line: String) throws -> ChatStreamEvent {
+        guard let data = line.data(using: .utf8) else {
+            throw APIError(message: "Invalid UTF-8 in chat stream")
+        }
+        return try JSONDecoder().decode(ChatStreamEvent.self, from: data)
+    }
+}
+
 struct ChatMessage: Codable, Identifiable {
     var id = UUID()
     let role: String
-    let content: String
+    var content: String
 
     enum CodingKeys: String, CodingKey { case role, content }
 
@@ -349,19 +390,108 @@ final class PortableAIClient {
 
     // MARK: Chat
 
-    /// Sends a chat turn. Pass `modelOverride` to set `/api/chat`'s
+    /// Sends a chat turn over `POST /api/chat`'s NDJSON stream (same shape
+    /// as the web UI): zero or more `{"token"}` lines, then a final
+    /// `{"done":true,"reply",…}`. `onToken` is called for each delta as it
+    /// arrives so the UI can grow the assistant bubble live.
+    ///
+    /// Pre-stream errors (4xx/5xx plain JSON) throw `APIError`. A mid-stream
+    /// `{"error"}` line also throws. Pass `modelOverride` for
     /// `model_override`; omit/nil uses the persona Modelfile `FROM`.
     func sendChat(
         persona: String,
         message: String,
         conversationId: String?,
-        modelOverride: String? = nil
+        modelOverride: String? = nil,
+        onToken: (@Sendable (String) -> Void)? = nil
     ) async throws -> ChatResponse {
         var body: [String: Any] = ["persona": persona, "message": message]
         if let conversationId { body["conversation_id"] = conversationId }
         if let modelOverride { body["model_override"] = modelOverride }
-        let data = try await request(path: "/api/chat", method: "POST", body: body)
-        return try JSONDecoder().decode(ChatResponse.self, from: data)
+
+        guard let url = URL(string: baseURL + "/api/chat") else {
+            throw APIError(message: "Invalid server URL")
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = deviceToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError(message: "No response from server")
+        }
+
+        let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? ""
+        // Non-NDJSON = error (or legacy single JSON) — gather the body first.
+        if !contentType.contains("ndjson") {
+            var data = Data()
+            for try await byte in bytes {
+                data.append(byte)
+            }
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            if !(200...299).contains(http.statusCode) {
+                throw APIError(
+                    message: (json?["error"] as? String) ?? "Server returned \(http.statusCode)",
+                    statusCode: http.statusCode
+                )
+            }
+            // Older servers returned one JSON object — keep working against them.
+            return try JSONDecoder().decode(ChatResponse.self, from: data)
+        }
+
+        if !(200...299).contains(http.statusCode) {
+            var data = Data()
+            for try await byte in bytes {
+                data.append(byte)
+            }
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            throw APIError(
+                message: (json?["error"] as? String) ?? "Server returned \(http.statusCode)",
+                statusCode: http.statusCode
+            )
+        }
+
+        var finalEvent: ChatStreamEvent?
+        var streamError: String?
+
+        for try await line in bytes.lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let event = try ChatNDJSON.decodeLine(trimmed)
+            if let err = event.error {
+                streamError = err
+                break
+            }
+            if let token = event.token {
+                onToken?(token)
+            }
+            if event.done == true {
+                finalEvent = event
+            }
+        }
+
+        if let streamError {
+            throw APIError(message: streamError)
+        }
+        guard let finalEvent,
+              let reply = finalEvent.reply,
+              let latency = finalEvent.latency_ms,
+              let model = finalEvent.model_used,
+              let conversation = finalEvent.conversation_id
+        else {
+            throw APIError(message: "Lost connection to Ollama mid-request.")
+        }
+
+        return ChatResponse(
+            reply: reply,
+            latency_ms: latency,
+            model_used: model,
+            conversation_id: conversation
+        )
     }
 
     /// Raw JSON bytes for a conversation, straight from the server's

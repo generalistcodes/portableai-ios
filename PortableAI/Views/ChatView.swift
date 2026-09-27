@@ -22,6 +22,8 @@ struct ChatView: View {
     @State private var lastModelUsed: String?
     @State private var didLoadInitial = false
     @State private var copiedMessageId: UUID?
+    /// Bumps on each streamed token so the scroll view tracks growth.
+    @State private var streamScrollTick = 0
 
     init(
         persona: Persona,
@@ -51,12 +53,14 @@ struct ChatView: View {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(messages) { message in
                             bubble(for: message)
-                                .id(message.id)
+                                // Include content length so token-by-token edits repaint.
+                                .id("\(message.id.uuidString)-\(message.content.count)")
                         }
-                        if isSending {
+                        if isSending && !isStreamingAssistant {
                             ProgressView()
                                 .tint(theme.accent)
                                 .padding(.leading, 8)
+                                .id("sending-indicator")
                         }
                         if let errorMessage {
                             Text(errorMessage)
@@ -75,9 +79,10 @@ struct ChatView: View {
                 }
                 .background(theme.main)
                 .onChange(of: messages.count) { _, _ in
-                    if let last = messages.last {
-                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                    }
+                    scrollToBottom(proxy: proxy)
+                }
+                .onChange(of: streamScrollTick) { _, _ in
+                    scrollToBottom(proxy: proxy)
                 }
             }
 
@@ -141,6 +146,20 @@ struct ChatView: View {
         }
         .onChange(of: conversationId) { _, newValue in
             if let newValue { isPinned = PinnedChatsStore.isPinned(conversationId: newValue) }
+        }
+    }
+
+    /// True once the live assistant bubble has any streamed text.
+    private var isStreamingAssistant: Bool {
+        guard let last = messages.last else { return false }
+        return last.role == "assistant" && !last.content.isEmpty
+    }
+
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        if let last = messages.last {
+            withAnimation {
+                proxy.scrollTo("\(last.id.uuidString)-\(last.content.count)", anchor: .bottom)
+            }
         }
     }
 
@@ -208,21 +227,28 @@ struct ChatView: View {
             if message.role == "user" { Spacer(minLength: 40) }
 
             VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 4) {
-                Text(message.content)
-                    // Explicit theme primary — never system `.primary` / `.secondary`
-                    .foregroundStyle(theme.textPrimary)
-                    .padding(10)
-                    .background(message.role == "user" ? theme.userBubble : theme.assistantBubble)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(
-                                message.role == "user"
-                                    ? theme.accent.opacity(0.35)
-                                    : theme.bubbleBorder,
-                                lineWidth: 1
-                            )
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Group {
+                    if message.role == "assistant" {
+                        Text(ChatMarkdown.attributed(message.content))
+                    } else {
+                        Text(message.content)
+                    }
+                }
+                .foregroundStyle(theme.textPrimary)
+                .tint(theme.accent)
+                .padding(10)
+                .background(message.role == "user" ? theme.userBubble : theme.assistantBubble)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(
+                            message.role == "user"
+                                ? theme.accent.opacity(0.35)
+                                : theme.bubbleBorder,
+                            lineWidth: 1
+                        )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .textSelection(.enabled)
 
                 Button {
                     UIPasteboard.general.string = message.content
@@ -253,6 +279,7 @@ struct ChatView: View {
         messages.append(ChatMessage(role: "user", content: text))
 
         isSending = true
+        let assistantId = UUID()
         Task {
             do {
                 let response = try await appState.client.sendChat(
@@ -260,14 +287,39 @@ struct ChatView: View {
                     message: text,
                     conversationId: conversationId,
                     modelOverride: modelOverride
-                )
-                conversationId = response.conversation_id
-                lastModelUsed = response.model_used
-                messages.append(ChatMessage(role: "assistant", content: response.reply))
+                ) { token in
+                    Task { @MainActor in
+                        if let idx = messages.firstIndex(where: { $0.id == assistantId }) {
+                            messages[idx].content += token
+                        } else {
+                            var bubble = ChatMessage(role: "assistant", content: token)
+                            bubble.id = assistantId
+                            messages.append(bubble)
+                        }
+                        streamScrollTick &+= 1
+                    }
+                }
+                await MainActor.run {
+                    conversationId = response.conversation_id
+                    lastModelUsed = response.model_used
+                    if let idx = messages.firstIndex(where: { $0.id == assistantId }) {
+                        // Authoritative full reply from the final `done` event.
+                        messages[idx].content = response.reply
+                    } else {
+                        var bubble = ChatMessage(role: "assistant", content: response.reply)
+                        bubble.id = assistantId
+                        messages.append(bubble)
+                    }
+                    streamScrollTick &+= 1
+                }
             } catch {
-                errorMessage = error.localizedDescription
+                await MainActor.run {
+                    // Drop a partial stream bubble on failure (matches web UI).
+                    messages.removeAll { $0.id == assistantId }
+                    errorMessage = error.localizedDescription
+                }
             }
-            isSending = false
+            await MainActor.run { isSending = false }
         }
     }
 }
